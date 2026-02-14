@@ -1,0 +1,1542 @@
+##_________________Circular RNAseq Analysis__________________________##
+
+# ------------------------------------------------------------
+# The nature of circular RNAs (circRNAs)
+# ------------------------------------------------------------
+# Circular RNAs (circRNAs) are covalently closed RNA molecules
+# generated through a non-canonical splicing event known as
+# back-splicing.
+
+# In back-splicing, a downstream 5' splice donor site is joined
+# to an upstream 3' splice acceptor site, producing a continuous
+# RNA loop without free 5' or 3' ends.
+
+# The absence of free ends renders circRNAs resistant to
+# exonuclease-mediated degradation, resulting in higher stability
+# compared to linear RNAs.
+
+# This structural stability enables circRNAs to persist over
+# longer time scales and participate in sustained gene
+# regulatory processes.
+
+# ------------------------------------------------------------
+# Biological functions of circRNAs
+# ------------------------------------------------------------
+# circRNAs are not transcriptional byproducts; they perform
+# diverse regulatory and functional roles.
+
+# 1) MicroRNA regulation:
+#    Many circRNAs act as microRNA sponges, binding miRNAs and
+#    modulating their availability to regulate target gene
+#    expression.
+
+# 2) Protein interactions:
+#    circRNAs can function as molecular scaffolds that facilitate
+#    protein-protein interactions, influencing signaling and
+#    transcriptional regulation.
+
+# 3) Protein coding potential:
+#    A subset of circRNAs can be translated into peptides, often
+#    with functions distinct from those encoded by linear mRNAs.
+
+# ------------------------------------------------------------
+# circRNAs in disease
+# ------------------------------------------------------------
+# Due to their stability and tissue-specific expression,
+# circRNAs are implicated in multiple disease contexts.
+
+# Cancer:
+# circRNAs frequently show altered expression in cancer and may
+# function as oncogenes or tumor suppressors. Their stability in
+# biofluids supports their use as diagnostic and prognostic
+# biomarkers.
+
+# Neurological disorders:
+# circRNAs are highly abundant in the brain, and dysregulation of
+# specific circRNAs has been associated with neurodegenerative
+# diseases such as Alzheimer's disease.
+
+# Cardiovascular disease:
+# circRNAs contribute to cardiac development and function, with
+# dynamic expression changes observed during cardiac stress and
+# injury, suggesting therapeutic relevance.
+
+
+#---------------------------------------#
+#Dataset Details
+#---------------------------------------#
+
+#GSE235850: RNA-Seq profiling of circular RNAs in colorectal cancer and circST7L as a potential biomarker
+
+#GSM7510781	Sample A9
+#GSM7510782	Sample A10
+#GSM7510783	Sample A11
+#GSM7510784	Sample A12
+#GSM7510785	Sample A13
+#GSM7510786	Sample B9
+#GSM7510787	Sample B10
+#GSM7510788	Sample B11
+#GSM7510789	Sample B12
+#GSM7510790	Sample B18
+
+#---------------------------------------#
+#Setting Up Your Analysis Environment
+#---------------------------------------#
+
+# Activate our RNA-seq environment
+conda activate rnaseq_env
+ 
+# Install the core analysis toolkit
+conda install -c bioconda circexplorer2 -y
+
+#---------------------------------------#
+#Preparing Annotation Files and Genome Index
+#---------------------------------------#
+# Download human reference files (mm10 for mouse)
+fetch_ucsc.py hg38 ref hg38_ref.txt    # RefSeq annotations
+fetch_ucsc.py hg38 kg hg38_kg.txt      # KnownGenes annotations
+fetch_ucsc.py hg38 fa hg38.fa          # Reference genome
+ 
+# Download STAR Index components for human genome from refgenie
+wget http://awspds.refgenie.databio.org/refgenomes.databio.org/2230c535660fb4774114bfa966a62f823fdb6d21acf138d4/star_index__default/chrLength.txt && \
+wget http://awspds.refgenie.databio.org/refgenomes.databio.org/2230c535660fb4774114bfa966a62f823fdb6d21acf138d4/star_index__default/chrName.txt && \
+wget http://awspds.refgenie.databio.org/refgenomes.databio.org/2230c535660fb4774114bfa966a62f823fdb6d21acf138d4/star_index__default/chrNameLength.txt && \
+wget http://awspds.refgenie.databio.org/refgenomes.databio.org/2230c535660fb4774114bfa966a62f823fdb6d21acf138d4/star_index__default/chrStart.txt && \
+wget http://awspds.refgenie.databio.org/refgenomes.databio.org/2230c535660fb4774114bfa966a62f823fdb6d21acf138d4/star_index__default/Genome && \
+wget http://awspds.refgenie.databio.org/refgenomes.databio.org/2230c535660fb4774114bfa966a62f823fdb6d21acf138d4/star_index__default/genomeParameters.txt && \
+wget http://awspds.refgenie.databio.org/refgenomes.databio.org/2230c535660fb4774114bfa966a62f823fdb6d21acf138d4/star_index__default/SA && \
+wget http://awspds.refgenie.databio.org/refgenomes.databio.org/2230c535660fb4774114bfa966a62f823fdb6d21acf138d4/star_index__default/SAindex
+
+#-------------------------------------------------------
+# Circular RNA Analysis Pipeline using CIRCexplorer2
+# Aligner: STAR
+#-------------------------------------------------------
+
+#-------------------------------
+# Step 1: Quality control and adapter trimming
+# Uses Trim Galore (wrapper around Cutadapt + FastQC)
+#-------------------------------
+
+trim_galore \
+    --fastqc \                 # Run FastQC after trimming
+    --paired \                 # Paired-end reads
+    --cores 20 \               # Number of CPU cores
+    ~/raw/Sample1_L001_R1_001.fastq.gz \
+    ~/raw/Sample1_L001_R2_001.fastq.gz \
+    -o ~/Trimmed/Sample1/      # Output directory
+
+
+#-------------------------------
+# Step 2: Genome alignment with STAR
+# Generates chimeric junctions required for circRNA detection
+#-------------------------------
+
+STAR \
+    --genomeDir ~/Genome_Index/STAR_GRCH38/ \   # STAR genome index (hg38)
+    --runThreadN 20 \                           # Number of threads
+    --readFilesIn \
+        ~/Trimmed/Sample1/Sample1_L001_R1_001_val_1.fq.gz \
+        ~/Trimmed/Sample1/Sample1_L001_R2_001_val_2.fq.gz \
+    --readFilesCommand zcat \                   # Decompress gzipped FASTQs
+    --chimSegmentMin 10 \                       # Minimum length for chimeric segments
+    --chimJunctionOverhangMin 10 \              # Required overhang for back-splice junctions
+    --outSAMtype BAM SortedByCoordinate \       # Output sorted BAM
+    --outFileNamePrefix ~/aligned/Sample1/Sample1_trimmed_
+	
+#| Option                         | Why it’s important                       |
+#| ------------------------------ | ---------------------------------------- |
+#| `--chimSegmentMin 10`          | Detects short back-splice junctions      |
+#| `--chimJunctionOverhangMin 10` | Improves circRNA confidence              |
+#| `Chimeric.out.junction`        | Required input for CIRCexplorer2         |
+#| Sorted BAM                     | Useful for downstream QC & visualization |
+
+
+#-------------------------------
+# Step 3: Circular RNA detection and annotation
+# Uses fast_circ (CIRCexplorer2-compatible parser)
+#-------------------------------
+
+fast_circ.py parse \
+    -r ~/ref/hg38/hg38_kg.txt \                 # Gene annotation (knownGene format)
+    -g ~/ref/hg38/hg38.fa \                     # Reference genome (FASTA)
+    -t STAR \                                   # Aligner type
+    -o ~/aligned/Sample1/fast_circ_parse \      # Output directory for parsed circRNAs
+    ~/aligned/Sample1/Sample1_trimmed_Chimeric.out.junction   # STAR chimeric junction file ((contains back-splice junctions)
+
+#Outout file: circularRNA_known.txt
+#Rename as: circRNAs_001.txt, circRNAs_002.txt
+
+
+#If you set the --low-confidence, it will also extract fusion junction reads matching the boundaries of exons of the different isofoms of the same gene, and output them in low_conf_circularRNA_known.txt.
+
+
+
+###R Studio:  Downstream analysis
+setwd("projectCirc")
+
+#-------------------------------
+#4. Install the package
+#-------------------------------
+
+BiocManager::install("circRNAprofiler")
+library(circRNAprofiler)
+
+# Packages needed for the vignettes
+library(ggpubr)
+library(ggplot2)
+library(VennDiagram)
+library(gridExtra)
+
+#-------------------------------
+#5. Load the requred files
+#-------------------------------
+projectCirc
+|
+|-circexplorer2
+| |--circRNAs_001.txt, circRNAs_002.txt, circRNAs_003.txt, circRNAs_004.txt, circRNAs_005.txt, circRNAs_006.txt
+|-*.gtf
+|-experiments.txt
+
+setwd("D:/cricRNA/projectCirc")
+#If only circexplorer2 is used for the circRNA detection run the following command:
+
+initCircRNAprofiler(projectFolderName = "projectCirc", detectionTools =
+                      "circexplorer2")
+
+#If circRNA detection is performed by using multiple detection tools then run the command with the name of the detection tools used, e.g.:
+
+initCircRNAprofiler(
+    projectFolderName = "projectCirc",
+    detectionTools = c("mapsplice", "nclscan", "circmarker")
+)
+
+
+#experiment.txt contains the experiment design information. It must have at least 3 columns with headers (tab separated)
+      #label (1st column): unique names of the samples (short but informative).
+	  #fileName (2nd column): name of the input files - e.g. circRNAs_X.txt, where x can be can be 001, 002 etc.
+	  #condition (3rd column): biological conditions - e.g. A or B; healthy or diseased if you have only 2 conditions
+
+##   label         fileName condition
+## 1    C1 circRNAs_001.txt         A
+## 2    C2 circRNAs_002.txt         A
+## 3    C3 circRNAs_003.txt         A
+## 4    D1 circRNAs_004.txt         B
+## 5    D2 circRNAs_005.txt         B
+## 6    D3 circRNAs_006.txt         B
+
+####Input files should contain the following columns:
+##   chrom    gene strand startUpBSE endDownBSE coverage
+## 1 chr15   ABHD2      +   89656956   89659752       35
+## 2 chr19 AGTPBP1      -   88248289   88190230       40
+
+#In our circularRNA_known.txt files:
+#startUpBSE => start
+#endDownBSE => end
+#coverage => readNumber
+#gene => geneName
+
+
+# Set project folder projectCirc as your working directory and run:
+check <- checkProjectFolder()
+check
+
+#GTF files
+# Download gencode.V19.annotation.gtf from https://www.gencodegenes.org/ and 
+#hg38: https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_38/gencode.v38.annotation.gtf.gz 
+#mm10: https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M10/gencode.vM10.annotation.gtf.gz
+
+# Set project folder projectCirc as your working directory.
+# put it in the working directory, then run:
+gtf <- formatGTF("gencode.V19.annotation.gtf")
+data("gtf")
+head(gtf)
+
+
+#-------------------------------
+#6. Import predicted circRNAs
+#-------------------------------
+backSplicedJunctions <- getBackSplicedJunctions(gtf)
+
+# Plot
+p <- ggplot(backSplicedJunctions, aes(x = tool)) +
+    geom_bar() +
+    labs(title = "", x = "Detection tool", y = "No. of circRNAs") +
+    theme_classic()
+
+# Run getDetectionTools() to get the code corresponding to the circRNA
+# detection tools.
+dt <- getDetectionTools() %>%
+    dplyr::filter( name %in% c("mapsplice","nclscan", "circmarker"))%>%
+    gridExtra::tableGrob(rows=NULL)
+
+# Merge plots
+gridExtra::grid.arrange(p, dt, nrow=1)
+
+# Set working directory to projectCirc which contains a short version of the raw
+# files containing the detected circRNAs. The run: 
+backSplicedJunctions <- getBackSplicedJunctions(gtf)
+
+# Alternatively, you can load the object containing the whole set of circRNAs detected
+# in the heart generated running the command above.
+data("backSplicedJunctions")
+head(backSplicedJunctions)
+
+
+# Plot
+p <- ggplot(backSplicedJunctions, aes(x = tool)) +
+    geom_bar() +
+    labs(title = "", x = "Detection tool", y = "No. of circRNAs") +
+    theme_classic()
+
+# Run getDetectionTools() to get the code corresponding to the circRNA
+# detection tools.
+dt <- getDetectionTools() %>%
+    dplyr::filter( name %in% c("mapsplice","nclscan", "circmarker"))%>%
+    gridExtra::tableGrob(rows=NULL)
+
+# Merge plots
+gridExtra::grid.arrange(p, dt, nrow=1)
+
+## Plot number of circRNAs detected by CIRCexplorer2
+p <- ggplot(backSplicedJunctions, aes(x = tool)) +
+    geom_bar() +
+    labs(
+        title = "",
+        x = "CircRNA detection tool",
+        y = "Number of circRNAs"
+    ) +
+    theme_classic()
+
+# Get detection tool information (CIRCexplorer2 only)
+dt <- getDetectionTools() %>%
+    dplyr::filter(name == "circexplorer2") %>%
+    gridExtra::tableGrob(rows = NULL)
+
+gridExtra::grid.arrange(p, dt, nrow = 1)
+#backSplicedJunctions$tool <- "CIRCexplorer2"
+
+#-------------------------------
+#7. Merge commonly identified circRNAs
+#-------------------------------
+# If you set projectCirc as your working directory, then run:
+#fixBSJsWithGTF = TRUE
+mergedBSJunctions <- mergeBSJunctions(backSplicedJunctions, gtf)
+head(mergedBSJunctions)
+
+# Plot
+p <- ggplot(mergedBSJunctions, aes(x = tool)) +
+    geom_bar() +
+    labs(title = "", x = "Detection tool", y = "No. of circRNAs") +
+    theme_classic()
+
+gridExtra::grid.arrange(p, dt, nrow=1)
+
+#You can run mergeBSJunctions() also if you used only 1 circRNA detection tool, or in this case you can also skip this step and use directly the backSplicedJunctions dataframe generated by getBackSplicedJunctions() in the downstream steps, e.g. in filterCirc(), getDeseqRes(), liftBSJcoords(), annotateBSJs().
+
+# ------------------------------------------------------------------------------
+# Merging back-spliced junctions and antisense circRNA removal
+#
+# During the execution of mergeBSJunctions(), circRNAs arising from the antisense
+# strand of annotated genes are identified and removed. A circRNA is classified
+# as antisense when the strand reported by the circRNA prediction tool
+# (CIRCexplorer2) does not match the strand of the corresponding host gene as
+# defined in the genome annotation (GTF file).
+#
+# Such antisense circRNAs may arise due to technical artifacts (e.g. ambiguous
+# read mapping) or from transcription of unannotated genes on the opposite strand.
+# Because current genome annotations do not comprehensively capture all antisense
+# or condition-specific transcripts, the true origin of these circRNAs cannot be
+# determined with confidence.
+#
+# To avoid ambiguous gene assignment and ensure reliable downstream analysis,
+# antisense circRNAs are excluded from the merged circRNA dataset. If specified
+# by the user, these antisense circRNAs can be exported to a separate file
+# (e.g. antisenseCircRNAs.txt) for manual inspection.
+#
+# All downstream circRNAprofiler modules operate exclusively on sense-derived
+# circRNAs.
+# ------------------------------------------------------------------------------
+
+#-------------------------------
+#8. Filter circRNAs
+#-------------------------------
+filteredCirc <-
+filterCirc(mergedBSJunctions, allSamples = FALSE, min = 5
+
+# Plot
+p <- ggplot(filteredCirc, aes(x = tool)) +
+    geom_bar() +
+    labs(title = "", x = "Detection tool", y = "No. of circRNAs") +
+    theme_classic()
+
+gridExtra::grid.arrange(p, dt, nrow=1)
+
+# Plot using Venn diagram
+cm <- filteredCirc[base::grep("cm", filteredCirc$tool), ]
+ms <- filteredCirc[base::grep("ms", filteredCirc$tool), ]
+ns <- filteredCirc[base::grep("ns", filteredCirc$tool), ]
+
+p <- VennDiagram::draw.triple.venn(
+    area1 = length(cm$id),
+    area2 = length(ms$id),
+    area3 = length(ns$id),
+    n12 = length(intersect(cm$id, ms$id)),
+    n23 = length(intersect(ms$id, ns$id)),
+    n13 = length(intersect(cm$id, ns$id)),
+    n123 = length(Reduce(
+        intersect, list(cm$id, ms$id, ns$id)
+    )),
+    category = c("cm", "ms", "ns"),
+    lty = "blank",
+    fill = c("skyblue", "pink1", "mediumorchid")
+)
+
+
+#-------------------------------
+#8. Find differentially expressed circRNAs
+#-------------------------------
+#The differential expression analysis is performed by comparing the condition positioned forward against the condition positioned backward in the alphabet (values in the column condition in experiment.txt). 
+#E.G.
+##   label         fileName condition
+## 1    C1 circRNAs_001.txt         A
+## 2    C2 circRNAs_002.txt         A
+## 3    C3 circRNAs_003.txt         A
+## 4    D1 circRNAs_004.txt         B
+## 5    D2 circRNAs_005.txt         B
+## 6    D3 circRNAs_006.txt         B
+
+#Create the experiment.txt in the above mentioned format and sequence. (A= control) 
+
+# Compare condition B Vs A
+# If you set projectCirc as your working directory, then run:
+deseqResBvsA <-
+    getDeseqRes(
+        filteredCirc,
+        condition = "A-B",
+        fitType = "local",
+        pAdjustMethod = "BH"
+    )
+head(deseqResBvsA)
+
+# Compare condition C Vs A
+deseqResCvsA <-
+    getDeseqRes(
+        filteredCirc,
+        condition = "A-C",
+        fitType = "local",
+        pAdjustMethod = "BH"
+    )
+head(deseqResCvsA)
+
+# We set the xlim and ylim to the same values for both plots to make them
+# comparable. Before setting the axis limits, you should visualize the 
+# plots with the default values to be able to define the correct limits.
+# An error might occur due to the log10 transformation of the padj values 
+# (e.g. log10(0) = inf). In that case set setyLim = TRUE and specify the the 
+# y limit manually.
+p1 <-
+    volcanoPlot(
+        deseqResBvsA,
+        log2FC = 1,
+        padj = 0.05,
+        title = "DCMs Vs. Con",
+        setxLim = TRUE,
+        xlim = c(-8 , 7.5),
+        setyLim = TRUE,
+        ylim = c(0 , 4),
+        gene = FALSE
+    )
+p2 <-
+    volcanoPlot(
+        deseqResCvsA,
+        log2FC = 1,
+        padj = 0.05,
+        title = "HCMs Vs. Con",
+        setxLim = TRUE,
+        xlim = c(-8 , 7.5),
+        setyLim = TRUE,
+        ylim = c(0 , 4),
+        gene = FALSE
+    )
+ggarrange(p1, 
+          p2, 
+          ncol = 1, 
+          nrow = 2)
+		  
+		  
+#--------------------------------------------------------------
+#9. Map BSJ coordinates between species and genome assemblies
+#--------------------------------------------------------------	  
+liftedBSJcoords <- liftBSJcoords(filteredCirc, map = "hg19ToMm9",
+                                 annotationHubID = "AH14155")
+								 
+								 
+#The function liftBSJCoords() maps back-spliced junction coordinates between different species and genome assemblies by using the liftOver utility from UCSC. 
+#Type data(ahChainFiles) to see all possibile options for annotationHubID E.g. if “AH14155” is specified, the hg19ToMm9.over.chain.gz will be used to convert the hg19 (Human GRCh37) coordinates to mm9 (Mouse GRCm37).
+
+#--------------------------------------------------------------
+#10. Annotate circRNAs internal structure and flanking introns
+#--------------------------------------------------------------	
+#***annotateBSJs()
+
+# ------------------------------------------------------------
+# annotateBSJs()
+# ------------------------------------------------------------
+# This function annotates the internal exon–intron structure of
+# circRNAs and their flanking introns using a user-provided
+# gene annotation (GTF).
+
+# A circRNA parental transcript is defined as a linear transcript
+# whose exon coordinates overlap with the detected back-spliced
+# junctions (BSJs).
+
+# Since BSJ coordinates may not exactly match annotated exon
+# boundaries, exon matching is performed using truncated BSJ
+# coordinates (e.g., coordinate 1225359 is truncated to 122535)
+# to allow tolerant exon detection.
+
+# If multiple transcripts of a gene overlap the BSJ coordinates,
+# the default behavior is to select the transcript that produces
+# the longest exon-only circRNA sequence. This selected transcript
+# is used for all downstream analyses.
+
+# Optionally, transcript selection can be constrained by providing
+# a 'transcripts.txt' file listing specific transcript IDs.
+# If not provided, the file is searched in the working directory.
+
+# The output data frame contains:
+# id                 : unique circRNA identifier
+# gene               : host gene of the circRNA
+# allTranscripts     : all transcripts overlapping the BSJ coordinates
+# transcript         : selected parental transcript (used downstream)
+# totExons           : total exons in the selected transcript
+# strand             : transcription strand
+# chrom              : chromosome
+# startUpIntron      : 5' coordinate of intron upstream of acceptor site
+# endUpIntron        : 3' coordinate of intron upstream of acceptor site
+# startUpBSE         : 5' coordinate of upstream back-spliced exon (acceptor)
+# endUpBSE           : 3' coordinate of upstream back-spliced exon
+# startDownBSE       : 5' coordinate of downstream back-spliced exon
+# endDownBSE         : 3' coordinate of downstream back-spliced exon (donor)
+# startDownIntron    : 5' coordinate of intron downstream of donor site
+# endDownIntron      : 3' coordinate of intron downstream of donor site
+# exNumUpBSE         : exon number of upstream back-spliced exon
+# exNumDownBSE       : exon number of downstream back-spliced exon
+# numOfExons         : number of exons within the circRNA
+# lenUpIntron        : length of upstream flanking intron (nt)
+# lenUpBSE           : length of upstream back-spliced exon (nt)
+# lenDownBSE         : length of downstream back-spliced exon (nt)
+# lenDownIntron      : length of downstream flanking intron (nt)
+# meanLengthBSEs     : mean length of back-spliced exons (nt)
+# meanLengthIntrons  : mean length of flanking introns (nt)
+# lenCircRNA         : total circRNA length (exons only, nt)
+
+# NOTE:
+# NA values may occur if:
+# 1) The back-spliced exon is the first or last exon of the transcript,
+#    and therefore lacks an upstream or downstream intron.
+# 2) The BSJ coordinates do not match any exon in the annotation file.
+#    It is critical to use the same GTF file used during read mapping.
+
+# ------------------------------------------------------------
+# Example: annotate the first 30 filtered circRNAs
+# ------------------------------------------------------------
+annotatedBSJs <- annotateBSJs(
+    filteredCirc[1:30, ],
+    gtf,
+    isRandom = FALSE
+)
+
+head(annotatedBSJs)
+
+#--------------------------------------
+#10. Generate random BSJs
+#--------------------------------------
+
+# ------------------------
+# getRandomBSJunctions()
+# ------------------------
+# This function generates a set of random back-spliced junctions
+# using the user-provided genome annotation (GTF).
+
+# Random BSJs are created by:
+# 1) Randomly selecting n transcripts from the annotation.
+# 2) Selecting two random exons from each transcript.
+# 3) Reporting the corresponding back-spliced junction (BSJ)
+#    coordinates derived from those exons.
+
+# These random BSJs serve as a background/control dataset and
+# can be used for comparative structural or functional analyses
+# (e.g., exon count, intron length, circRNA length distributions).
+
+# The argument 'f' controls the frequency of single-exon circRNAs
+# in the random dataset.
+# Example:
+#   f = 0.10  →  10% of random BSJs are constrained to single-exon circRNAs
+
+# ------------------------------------------------------------
+# Estimate the frequency of single-exon circRNAs in real data
+# ------------------------------------------------------------
+# Single-exon circRNAs are identified when either the upstream
+# or downstream back-spliced exon corresponds to the first exon
+# of the selected transcript.
+
+f <-
+    sum(
+        (annotatedBSJs$exNumUpBSE == 1 |
+         annotatedBSJs$exNumDownBSE == 1),
+        na.rm = TRUE
+    ) / (nrow(annotatedBSJs) * 2)
+
+# --------------------------------------
+# Generate random back-spliced junctions
+# --------------------------------------
+# The number of random BSJs (n) is set equal to the number of
+# annotated circRNAs to allow direct comparison.
+# A random seed is fixed for reproducibility.
+
+randomBSJunctions <-
+    getRandomBSJunctions(
+        gtf,
+        n = nrow(annotatedBSJs),
+        f = f,
+        setSeed = 123
+    )
+
+head(randomBSJunctions)
+# ------------------------------------------------------------
+#Annotate randomly selected back-spliced junctions.
+# ------------------------------------------------------------
+annotatedRBSJs <- annotateBSJs(randomBSJunctions, gtf, isRandom = TRUE)
+
+
+# ------------------------------------------------------------
+# Structural characterization of circRNAs
+# ------------------------------------------------------------
+# annotatedBSJs  : foreground dataset (predicted/real circRNAs)
+# annotatedRBSJs : background dataset (random BSJs)
+
+# These analyses compare real circRNAs against a matched random
+# background to identify structural features associated with
+# circRNA biogenesis.
+
+# ------------------------------------------------------------
+# Length of flanking introns
+# ------------------------------------------------------------
+# Tests whether circRNAs are flanked by longer introns compared
+# to random BSJs, a known feature facilitating back-splicing.
+
+p1 <- plotLenIntrons(
+    annotatedBSJs,
+    annotatedRBSJs,
+    title = "Length of flanking introns",
+    df1Name = "predicted",
+    df2Name = "random",
+    setyLim = TRUE,
+    ylim = c(0, 7)
+)
+
+# ------------------------------------------------------------
+# Length of back-spliced exons
+# ------------------------------------------------------------
+# Compares exon lengths involved in circularization against
+# random BSJs to assess exon length bias in circRNA formation.
+
+p2 <- plotLenBSEs(
+    annotatedBSJs,
+    annotatedRBSJs,
+    title = "Length of back-spliced exons",
+    df1Name = "predicted",
+    df2Name = "random",
+    setyLim = TRUE,
+    ylim = c(0, 7)
+)
+
+# ------------------------------------------------------------
+# Number of circRNAs produced per host gene
+# ------------------------------------------------------------
+# Evaluates whether specific genes act as circRNA hotspots.
+
+p3 <-
+    plotHostGenes(
+        annotatedBSJs,
+        title = "# circRNAs produced per host gene"
+    )
+
+# ------------------------------------------------------------
+# Number of exons between back-spliced junctions
+# ------------------------------------------------------------
+# Assesses circRNA complexity by measuring how many internal
+# exons are included within the circular RNA.
+
+p4 <-
+    plotExBetweenBSEs(
+        annotatedBSJs,
+        title = "# exons between back-spliced junctions"
+    )
+
+# ------------------------------------------------------------
+# Position of back-spliced exons within host transcripts
+# ------------------------------------------------------------
+# Determines whether circRNAs preferentially arise from specific
+# exon positions (e.g., internal vs terminal exons).
+
+p5 <-
+    plotExPosition(
+        annotatedBSJs,
+        n = 1,
+        title = "Position of back-spliced exons within transcripts"
+    )
+
+# ------------------------------------------------------------
+# Total number of exons in host transcripts
+# ------------------------------------------------------------
+# Examines whether circRNAs preferentially originate from genes
+# with longer and more complex transcript structures.
+
+p6 <-
+    plotTotExons(
+        annotatedBSJs,
+        title = "Total number of exons in host transcripts"
+    )
+
+# ------------------------------------------------------------
+# Combine all plots into a single figure
+# ------------------------------------------------------------
+ggarrange(
+    p1,
+    p2,
+    p3,
+    p4,
+    p5,
+    p6,
+    ncol = 2,
+    nrow = 3
+)
+
+# ------------------------------------------------------------
+# Retrieve target sequences for downstream analysis
+# ------------------------------------------------------------
+# Downstream screenings (e.g., motif analysis, RBP binding,
+# miRNA target prediction) can be performed on one or multiple
+# circRNAs of interest, such as differentially expressed circRNAs
+# or circRNAs arising from the same host gene.
+
+# In this analysis, the circRNA derived from the ALPK2 gene is
+# selected for further downstream screening.
+
+# ------------------------------------------------------------
+# Select circRNA of interest (foreground)
+# ------------------------------------------------------------
+# CircRNA ID format:
+# gene:strand:chrom:start:end
+
+annotatedCirc <-
+    annotatedBSJs[
+        annotatedBSJs$id == "ALPK2:-:chr18:56247780:56246046",
+    ]
+
+# ------------------------------------------------------------
+# Define background circRNA dataset
+# ------------------------------------------------------------
+# As background, all remaining filtered circRNAs are used.
+# Alternatively, randomly generated BSJs can be used as a
+# background dataset for sequence-based analyses.
+
+annotatedBackgroundCircs <-
+    annotatedBSJs[
+        annotatedBSJs$id != "ALPK2:-:chr18:56247780:56246046",
+    ]
+
+# ------------------------------------------------------------
+# Sequence retrieval overview
+# ------------------------------------------------------------
+# CircRNA-related sequences that can be retrieved include:
+# - Full circRNA sequences
+# - Back-spliced junction (BSJ) sequences only
+# - Sequences flanking the BSJ
+
+# Sequences are retrieved from the UCSC genome database.
+# By default, sequences are returned in the 5' -> 3' direction
+# corresponding to the positive DNA strand.
+
+# For circRNAs arising from genes on the negative strand,
+# sequences are automatically complemented and reversed
+# to maintain a 5' -> 3' orientation.
+
+# Sequences are retrieved only for BSJs that overlap exon
+# boundaries of at least one annotated transcript (see annotateBSJs()).
+
+# ------------------------------------------------------------
+# Load genome sequence (BSgenome)
+# ------------------------------------------------------------
+# Genome sequences are accessed via the BSgenome package.
+# Ensure that the appropriate genome build used during read
+# mapping and circRNA detection is loaded.
+
+if (!requireNamespace("BSgenome.Hsapiens.UCSC.hg19", quietly = TRUE)) {
+    BiocManager::install("BSgenome.Hsapiens.UCSC.hg19")
+}
+library("BSgenome.Hsapiens.UCSC.hg19")
+# Retrieve the hg19 genome
+genome <- BSgenome::getBSgenome("BSgenome.Hsapiens.UCSC.hg19")
+
+
+
+#---------------------------------------
+#11. Retrieve internal circRNA sequences
+#---------------------------------------
+# ------------------------------------------------------------
+# getCircSeqs()
+# ------------------------------------------------------------
+# This function retrieves the internal circRNA sequences for
+# downstream sequence-based analyses (e.g., motif discovery,
+# RBP binding prediction, miRNA targeting).
+
+# By default, circRNA sequences are reconstructed by:
+# 1) Extracting all exons located between the back-spliced
+#    junctions (BSJs) of each circRNA.
+# 2) Concatenating the exon sequences in transcript order
+#    to recreate the linearized circRNA sequence.
+
+# To explicitly represent the back-spliced junction,
+# 50 nucleotides from the 5' end of the circRNA sequence
+# are appended to the 3' end of the sequence.
+
+# Sequence retrieval rules:
+# - Sequences are retrieved from the provided genome object
+#   (BSgenome).
+# - Sequences are returned in the 5' -> 3' orientation.
+# - For circRNAs originating from genes on the negative strand,
+#   sequences are reverse-complemented automatically.
+# - Sequences are retrieved only for circRNAs whose BSJs
+#   overlap exon boundaries of at least one annotated transcript
+#   (see annotateBSJs()).
+
+# ------------------------------------------------------------
+# Retrieve circRNA sequences (foreground)
+# ------------------------------------------------------------
+# Foreground: circRNA of interest (e.g., ALPK2 circRNA)
+
+targetsFTS_circ <-
+    getCircSeqs(
+        annotatedCirc,
+        gtf,
+        genome
+    )
+
+# ------------------------------------------------------------
+# Retrieve circRNA sequences (background)
+# ------------------------------------------------------------
+# Background: all remaining filtered circRNAs
+# (Alternatively, random BSJs can be used)
+
+targetsBTS_circ <-
+    getCircSeqs(
+        annotatedBackgroundCircs,
+        gtf,
+        genome
+    )
+
+# ------------------------------------------------------------
+# Output structure
+# ------------------------------------------------------------
+# The output is a list containing one data frame with the
+# following columns:
+#
+# id        : unique circRNA identifier
+# gene      : host gene of the circRNA
+# transcript: selected parental transcript used downstream
+# strand    : transcription strand
+# chrom     : chromosome
+# startGR   : 5' genomic coordinate of extracted sequence
+# endGR     : 3' genomic coordinate of extracted sequence
+# length   : predicted circRNA length (exons only, nt)
+# seq       : sequence used for downstream analysis; includes
+#             an additional 50 nt appended at the 3' end to
+#             represent the back-spliced junction
+# type      : sequence type ("circ" for circRNA)
+
+#---------------------------------------
+#12. Retrieve BSJ sequences
+#---------------------------------------
+
+# ------------------------------------------------------------
+# getSeqsAcrossBSJs()
+# ------------------------------------------------------------
+# This function retrieves short sequences spanning the
+# back-spliced junctions (BSJs) for junction-centric analyses
+# such as RBP binding, splice motif enrichment, or k-mer analysis.
+
+# For each circRNA, the sequence is constructed by:
+# - Extracting 11 nucleotides upstream of the BSJ
+# - Extracting 11 nucleotides downstream of the BSJ
+# - Concatenating both fragments to produce a 22-nt sequence
+
+# Sequence retrieval rules:
+# - Sequences are retrieved from the provided genome (BSgenome)
+# - Sequences are returned in the 5' -> 3' orientation
+# - For circRNAs arising from genes on the negative strand,
+#   sequences are reverse-complemented automatically
+# - Sequences are retrieved only for BSJs overlapping exon
+#   boundaries of at least one annotated transcript
+#   (see annotateBSJs())
+
+# ------------------------------------------------------------
+# Retrieve BSJ-spanning sequences (foreground)
+# ------------------------------------------------------------
+# Foreground: circRNA of interest (e.g., ALPK2 circRNA)
+
+targetsFTS_bsj <-
+    getSeqsAcrossBSJs(
+        annotatedCirc,
+        gtf,
+        genome
+    )
+
+# ------------------------------------------------------------
+# Retrieve BSJ-spanning sequences (background)
+# ------------------------------------------------------------
+# Background: all remaining filtered circRNAs
+# (Alternatively, random BSJs can be used)
+
+targetsBTS_bsj <-
+    getSeqsAcrossBSJs(
+        annotatedBackgroundCircs,
+        gtf,
+        genome
+    )
+
+# ------------------------------------------------------------
+# Output structure
+# ------------------------------------------------------------
+# The output is a list containing one data frame with the
+# following columns:
+#
+# id        : unique circRNA identifier
+# gene      : host gene of the circRNA
+# transcript: selected parental transcript used downstream
+# strand    : transcription strand
+# chrom     : chromosome
+# startGR   : 5' genomic coordinate of extracted sequence
+# endGR     : 3' genomic coordinate of extracted sequence
+# length   : length of the extracted sequence (22 nt for BSJs)
+# seq       : BSJ-spanning sequence used for downstream analysis
+# type      : sequence type ("bsj" for back-spliced junctions)
+
+
+
+#----------------------------------------
+#13. Retrieve sequences flanking the BSJs
+#----------------------------------------
+
+# ------------------------------------------------------------
+# getSeqsFromGRs(): sequence extraction from genomic ranges
+# ------------------------------------------------------------
+# The function getSeqsFromGRs() retrieves sequences associated
+# with back-spliced junctions using three configurable modules.
+
+# The type argument defines the class of sequences extracted:
+#   type = "fi"  : introns flanking the back-spliced exons
+#   type = "ie"  : sequences from a user-defined genomic window
+#                  surrounding the back-spliced junction
+#   type = "bse" : sequences corresponding to back-spliced exons
+
+# For type = "ie", the genomic window is defined by:
+#   lIntron : number of nucleotides extracted from intronic regions
+#   lExon   : number of nucleotides extracted from exonic regions
+
+# Refer to ?getSeqsFromGRs for full argument details and examples.
+
+# ------------------------------------------------------------
+# Foreground target sequences
+# ------------------------------------------------------------
+targetsFTS_gr <-
+    getSeqsFromGRs(
+        annotatedCirc,        # annotated circRNA genomic ranges
+        genome,               # reference genome
+        lIntron = 200,        # intronic window size
+        lExon = 9,            # exonic window size
+        type = "ie"           # intron–exon window sequences
+    )
+
+# ------------------------------------------------------------
+# Background target sequences
+# ------------------------------------------------------------
+targetsBTS_gr <-
+    getSeqsFromGRs(
+        annotatedBackgroundCircs,
+        genome,
+        lIntron = 200,
+        lExon = 9,
+        type = "ie"
+    )
+
+# ------------------------------------------------------------
+# Output structure
+# ------------------------------------------------------------
+# The output is a list of data frames. Each data frame contains
+# the following columns:
+
+# id        : unique sequence identifier
+# gene      : gene from which the circRNA originates
+# transcript: transcript overlapping the back-spliced junction
+# strand    : transcriptional strand (+ / -)
+# chrom     : chromosome of origin
+# startGR   : 5' coordinate of the extracted genomic range
+# endGR     : 3' coordinate of the extracted genomic range
+# length    : length of the extracted sequence
+# seq       : nucleotide sequence used for downstream analysis
+# type      : sequence category returned by getSeqsFromGRs()
+
+# type field interpretation:
+#   "fi"  : introns flanking back-spliced exons
+#   "ie"  : genomic window defined by lIntron and lExon
+#   "bse" : back-spliced exon sequences
+
+#----------------------------------------
+#14. Screen target sequences for RBP/de Novo motifs
+#----------------------------------------
+
+# ------------------------------------------------------------
+# getMotifs(): motif discovery in circRNA-associated sequences
+# ------------------------------------------------------------
+# The function getMotifs() scans target sequences (modules 9–11)
+# for recurrent sequence motifs of a user-defined length.
+
+# Motif discovery workflow:
+# 1) All possible motifs of length = width are generated
+# 2) Target sequences are scanned for motif occurrences
+# 3) Overlapping motifs are counted
+# 4) Identified motifs are matched against known RNA-binding
+#    protein (RBP) motifs from ATtRACT or MEME databases
+# 5) A motif is retained if it matches or is a substring of
+#    a known RBP motif
+
+# Motif filtering options:
+#   rbp = TRUE    : report only motifs matching known RBPs
+#   rbp = FALSE   : report unknown motifs
+#   reverse = TRUE: analyze both direct and reversed motifs
+#                   from databases and motifs.txt
+
+# Motif location:
+# - Reported as the start position within the sequence
+# - Coordinates are 1-based
+
+# BSJ-specific behavior:
+# - When analyzing BSJ sequences, only motifs crossing the
+#   back-spliced junction (≥1 nucleotide overlap) are reported
+# - Sequence trimming depends on motif width:
+#     width = 6 → 5 nt retained on each side of BSJ
+#     width = 7 → 6 nt retained on each side of BSJ
+
+# NOTE:
+# - If ATtRACT or MEME databases are unreachable, only motifs
+#   provided in motifs.txt will be used
+# - Custom motifs can be supplied via motifs.txt (optional)
+# - By default, motifs.txt is searched in the working directory
+# - Use pathToMotifs to specify a custom file location
+
+# Example:
+# - RBM20 consensus motif can be added manually to motifs.txt
+#   if not present in the selected database
+
+# ------------------------------------------------------------
+# Motif discovery in foreground target sequences
+# ------------------------------------------------------------
+motifsFTS_gr <-
+    getMotifs(
+        targetsFTS_gr,        # foreground sequences
+        width = 6,            # motif length
+        database = "ATtRACT", # RBP motif database
+        species = "Hsapiens", # species identifier
+        rbp = TRUE,           # report only RBP-associated motifs
+        reverse = FALSE       # do not analyze reversed motifs
+    )
+
+# ------------------------------------------------------------
+# Motif discovery in background target sequences
+# ------------------------------------------------------------
+motifsBTS_gr <-
+    getMotifs(
+        targetsBTS_gr,
+        width = 6,
+        database = "ATtRACT",
+        species = "Hsapiens",
+        rbp = TRUE,
+        reverse = FALSE
+    )
+
+# ------------------------------------------------------------
+# Output structure
+# ------------------------------------------------------------
+# The output is a list with four elements:
+
+# 1) targets   : dataframe describing the input sequences
+#                Columns:
+#                id, gene, transcript, strand, chrom,
+#                startGR, endGR, length, seq, type
+
+# 2) counts    : dataframe of motif counts per target sequence
+#                Each column corresponds to a motif
+
+# 3) locations : dataframe reporting motif start positions
+#                Each column corresponds to a motif
+
+# 4) motifs    : dataframe containing motif sequences and the
+#                associated RNA-binding proteins
+
+# ------------------------------------------------------------
+# mergeMotifs(): group motifs by RNA-binding protein (RBP)
+# ------------------------------------------------------------
+# The function mergeMotifs() groups all motifs recognized by
+# the same RBP and reports the total motif counts per RBP.
+# This step reduces redundancy caused by multiple motif
+# variants binding to the same protein.
+
+# Type ?mergeMotifs for details on arguments and examples.
+
+# Merge motifs for foreground sequences
+mergedMotifsFTS_gr <- mergeMotifs(motifsFTS_gr)
+
+# Merge motifs for background sequences
+mergedMotifsBTS_gr <- mergeMotifs(motifsBTS_gr)
+
+# ------------------------------------------------------------
+# Retrieve and visualize motif enrichment
+# ------------------------------------------------------------
+# Log2 fold change (log2FC) and motif counts are computed
+# by comparing foreground vs background sequences.
+# If the number or total length of target sequences differs
+# between foreground and background, normalization is required.
+
+# Normalization strategies:
+# - Normalize by number of target sequences:
+#   Use only if the same number of sequences and identical
+#   sequence lengths were analyzed.
+
+# - Normalize by total sequence length (recommended):
+#   Use when sequence lengths differ between datasets.
+
+# ------------------------------------------------------------
+# Normalization examples
+# ------------------------------------------------------------
+
+# For flanking intronic or genomic window sequences:
+# nf1 = sum(targetsFTS_gr$upGR$length, na.rm = TRUE) +
+#       sum(targetsFTS_gr$downGR$length, na.rm = TRUE)
+# nf2 = sum(targetsBTS_gr$upGR$length, na.rm = TRUE) +
+#       sum(targetsBTS_gr$downGR$length, na.rm = TRUE)
+
+# For circRNA sequences:
+# nf1 = sum(targetsFTS_circ$circ$length, na.rm = TRUE)
+# nf2 = sum(targetsBTS_circ$circ$length, na.rm = TRUE)
+
+# For back-spliced junction (BSJ) sequences:
+# nf1 = sum(targetsFTS_bsj$bsj$length, na.rm = TRUE)
+# nf2 = sum(targetsBTS_bsj$bsj$length, na.rm = TRUE)
+
+# ------------------------------------------------------------
+# Plot motif enrichment (log2FC and normalized counts)
+# ------------------------------------------------------------
+p <-
+    plotMotifs(
+        mergedMotifsFTS_gr,   # foreground merged motifs
+        mergedMotifsBTS_gr,   # background merged motifs
+        nf1 = sum(targetsFTS_gr$upGR$length, na.rm = TRUE) +
+              sum(targetsFTS_gr$downGR$length, na.rm = TRUE),
+        nf2 = sum(targetsBTS_gr$upGR$length, na.rm = TRUE) +
+              sum(targetsBTS_gr$downGR$length, na.rm = TRUE),
+        log2FC = 1,           # log2 fold-change cutoff
+        removeNegLog2FC = TRUE, # remove negatively enriched motifs
+        df1Name = "circALPK2",  # foreground label
+        df2Name = "Other circRNAs", # background label
+        angle = 45            # rotate x-axis labels
+    )
+
+# ------------------------------------------------------------
+# Combine plots: log2FC and normalized motif counts
+# ------------------------------------------------------------
+ggarrange(
+    p[[1]],
+    p[[2]],
+    labels = c("", ""),
+    ncol = 2,
+    nrow = 1
+)
+# ------------------------------------------------------------
+# Motif enrichment visualization and output interpretation
+# ------------------------------------------------------------
+# Bar chart showing the log2 fold change (log2FC cutoff = 1)
+# and the normalized counts of RNA-binding protein (RBP) motifs
+# found in regions flanking the predicted back-spliced junction
+# of circALPK2 compared to the remaining subset of 1457
+# filtered circRNAs.
+
+# The plot displays:
+# - Enriched RBPs (positive log2FC only)
+# - Normalized motif counts for foreground and background
+# - Log2FC calculated from normalized counts
+
+# ------------------------------------------------------------
+# Retrieve the motif statistics table
+# ------------------------------------------------------------
+# Use p[[3]] to access the data frame containing motif counts,
+# normalized values, and log2 fold changes.
+
+# View the first few rows of the table
+head(p[[3]])
+
+# ------------------------------------------------------------
+# Description of columns in p[[3]]
+# ------------------------------------------------------------
+
+# foreground:
+#   Raw number of motifs found in the foreground target sequences
+#   (e.g. circALPK2 flanking regions).
+
+# background:
+#   Raw number of motifs found in the background target sequences
+#   (e.g. remaining filtered circRNAs).
+
+# foregroundNorm:
+#   Normalized motif count in foreground sequences.
+#   Computed as (foreground + 1) divided by the total number
+#   or total length of the foreground target sequences.
+
+# backgroundNorm:
+#   Normalized motif count in background sequences.
+#   Computed as (background + 1) divided by the total number
+#   or total length of the background target sequences.
+
+# log2FC:
+#   Log2 fold change calculated as:
+#   log2(foregroundNorm / backgroundNorm)
+
+# motifF:
+#   Motif sequences corresponding to the RBP detected
+#   in the foreground target sequences.
+
+# motifB:
+#   Motif sequences corresponding to the RBP detected
+#   in the background target sequences.
+
+# ------------------------------------------------------------
+# Notes on normalization and fold-change calculation
+# ------------------------------------------------------------
+# To avoid infinite log2FC values, a pseudo-count of 1
+# is added to the number of motif occurrences in both
+# foreground and background before normalization.
+
+# ------------------------------------------------------------
+# Extensions of the analysis
+# ------------------------------------------------------------
+# The same workflow can be applied to:
+# - circRNA internal sequences
+# - back-spliced junction (BSJ) sequences
+#
+# In these cases, target sequences must first be retrieved
+# using getCircSeqs() or getSeqsAcrossBSJs(), followed by
+# getMotifs() and mergeMotifs(), as described in previous steps.
+
+
+#-----------------------------------------------------
+#15. Screen circRNA sequences for miRNA binding sites
+#-----------------------------------------------------
+
+# ------------------------------------------------------------
+# getMiRsites(): prediction of miRNA binding sites on circRNAs
+# ------------------------------------------------------------
+# The function getMiRsites() identifies putative miRNA binding
+# sites within circRNA sequences.
+#
+# Workflow summary:
+# - miRNA sequences are retrieved from miRBase
+# - miRNA sequences are reversed (3' -> 5')
+# - circRNA sequences are scanned using a sliding window (step = 1)
+# - Alignments are performed without gaps and with single gaps
+#   introduced at different positions to optimize matching
+#
+# Matching rules:
+# - Canonical Watson-Crick (WC) matches:
+#     A–U and G–C
+# - Non-canonical matches:
+#     G–U
+# - Mismatches:
+#     gaps (bulges) or symmetric mismatches (A–G, A–C, U–C)
+#
+# A perfect seed match:
+# - No gaps
+# - Only canonical WC matches within the seed region
+#
+# ------------------------------------------------------------
+# miRNA regions analyzed
+# ------------------------------------------------------------
+# Seed region: positions 2–8 (7 nt)
+# Central region: positions 9–12 (4 nt)
+# Compensatory region: positions 13–16 (4 nt)
+#
+# Matches are quantified independently for:
+# - Seed region
+# - Central region
+# - Compensatory region
+#
+# ------------------------------------------------------------
+# Output structure
+# ------------------------------------------------------------
+# The output is a list of data frames, one per circRNA.
+# Each data frame contains information for each predicted
+# miRNA binding site.
+
+# Column descriptions:
+#
+# miRseqRev:
+#   Reversed miRNA sequence used in the analysis
+#   (3' -> 5'), annotated with seed, central and
+#   compensatory regions.
+#
+# counts:
+#   Number of miRNA seed region binding sites detected
+#   in the circRNA sequence.
+#
+# totMatchesInSeed:
+#   Total number of matches (canonical + non-canonical)
+#   in the seed region (maximum = 7).
+#
+# cwcMatchesInSeed:
+#   Number of continuous canonical WC matches in the seed.
+#
+# seedLocation:
+#   Position in the circRNA sequence (1-based) matching
+#   miRNA nucleotide 8. Remaining seed nucleotides are
+#   located downstream.
+#
+# t1:
+#   Nucleotide in the circRNA sequence matching miRNA
+#   nucleotide 1 (5' end).
+#
+# totMatchesInCentral:
+#   Total matches in the central region (maximum = 4).
+#
+# cwcMatchesInCentral:
+#   Continuous canonical WC matches in the central region.
+#
+# totMatchesInCompensatory:
+#   Total matches in the compensatory region (maximum = 4).
+#
+# cwcMatchesInCompensatory:
+#   Continuous canonical WC matches in the compensatory region.
+#
+# localAUcontent:
+#   Percentage of A/U nucleotides in the 10 nt upstream
+#   and downstream of the seed binding site.
+#
+# ------------------------------------------------------------
+# Interpretation of binding stringency
+# ------------------------------------------------------------
+# Binding sites are filtered using user-defined criteria.
+#
+# Example:
+# - totalMatches = 7
+# - maxNonCanonicalMatches = 1
+#
+# This retrieves sites with:
+# - 7 total seed matches
+# - Only 1 non-canonical (G–U) match allowed
+#
+# If cwcMatchesInSeed = 4:
+# - 4 continuous WC matches
+# - 1 non-canonical match
+# - 2 additional WC matches
+#
+# The same interpretation applies to central and
+# compensatory regions.
+#
+# ------------------------------------------------------------
+# Sequence scanning strategy
+# ------------------------------------------------------------
+# miRNA analysis starts at position 30 of the circRNA
+# to allow alignment of central and compensatory regions
+# upstream of the seed site.
+#
+# The first 30 nucleotides are analyzed in the final phase
+# together with the back-spliced junction.
+#
+# ------------------------------------------------------------
+# Computational considerations
+# ------------------------------------------------------------
+# Runtime depends on:
+# - circRNA length
+# - number of miRNAs analyzed
+#
+# Example:
+# - ~1700 nt circRNA
+# - ~360 miRNAs
+# - Runtime ≈ 4 h 20 min
+#
+# To reduce runtime and false positives:
+# - Restrict analysis to miRNAs expressed in the tissue
+#   of interest.
+#
+# ------------------------------------------------------------
+# miRBase access and fallback option
+# ------------------------------------------------------------
+# If the miRBase URL cannot be reached, the analysis stops.
+#
+# To proceed without internet access:
+# - Set miRBaseLatestRelease = FALSE
+# - Ensure a file named "mature.fa" (miRBase mature miRNAs)
+#   is present in the working directory.
+#
+# ------------------------------------------------------------
+# Optional: restrict analysis to selected miRNAs
+# ------------------------------------------------------------
+# To analyze only a subset of miRNAs:
+# - Specify miRNA IDs in miRs.txt (optional)
+# - If miRs.txt is not in the working directory,
+#   specify pathToMiRs
+#
+# ------------------------------------------------------------
+# Run miRNA binding site prediction
+# ------------------------------------------------------------
+miRsites <-
+    getMiRsites(
+        targetsFTS_circ,
+        miRspeciesCode = "hsa",
+        miRBaseLatestRelease = TRUE,
+        totalMatches = 6,
+        maxNonCanonicalMatches = 1
+    )
+# ------------------------------------------------------------
+# rearrangeMiRres(): reorganize miRNA binding site results
+# ------------------------------------------------------------
+# The function rearrangeMiRres() restructures the output of
+# getMiRsites() to improve interpretability and downstream use.
+#
+# Output structure:
+# - Each element of the resulting list corresponds to one circRNA
+# - Only miRNAs with at least one predicted binding site
+#   are retained
+#
+# This step simplifies visualization and result export.
+
+# Rearrange miRNA binding site predictions
+rearragedMiRres <- rearrangeMiRres(miRsites)
+
+# ------------------------------------------------------------
+# Export miRNA binding site predictions to Excel
+# ------------------------------------------------------------
+# If multiple circRNAs were analyzed, predictions for each
+# circRNA can be stored in separate sheets of an Excel file
+# to facilitate inspection and sharing.
+#
+# Each circRNA generates two sheets:
+# - One for seed region binding site information
+# - One for extended alignment features
+
+# Initialize counters
+i <- 1
+j <- 1
+
+# Write miRNA binding site predictions to an xlsx file
+while (i <= length(rearragedMiRres)) {
+
+    write.xlsx2(
+        rearragedMiRres[[i]][[1]],
+        file = "miRsites_TM6_NCM1.xlsx",
+        sheetName = paste("sheet", j, sep = ""),
+        append = TRUE
+    )
+
+    j <- j + 1
+
+    write.xlsx2(
+        rearragedMiRres[[i]][[2]],
+        file = "miRsites_TM6_NCM1.xlsx",
+        sheetName = paste("sheet", j, sep = ""),
+        append = TRUE
+    )
+
+    i <- i + 1
+    j <- j + 1
+}
+
+# ------------------------------------------------------------
+# Visualization of miRNA binding site predictions
+# ------------------------------------------------------------
+# The function plotMiR() visualizes miRNA binding site
+# predictions for one circRNA at a time.
+#
+# By setting id = 1, the miRNA results for the first circRNA
+# in the rearragedMiRres list are plotted.
+
+# Type ?plotMiR for details on arguments and usage.
+
+# Plot miRNA analysis results for one circRNA
+p <- plotMiR(
+    rearragedMiRres,
+    n = 40,          # number of miRNAs displayed
+    color = "blue",  # bar color
+    miRid = TRUE,    # display miRNA IDs
+    id = 1           # circRNA index in rearragedMiRres
+)
+
+# Display plot
+p
+
+
+# ------------------------------------------------------------
+# Annotate target sequences
+# ------------------------------------------------------------
+
+# ------------------------------------------------------------
+#16. Annotate GWAS SNPs
+# ------------------------------------------------------------
+# The function annotateSNPsGWAS() annotates GWAS-associated SNPs
+# overlapping the genomic regions flanking the back-spliced
+# junctions of circRNAs.
+#
+# SNP information and genomic coordinates are retrieved from the
+# GWAS Catalog database.
+#
+# The genomic coordinates of GWAS SNPs are intersected with the
+# genomic ranges of the target sequences.
+#
+# This annotation is available only for the human genome.
+# If no overlapping GWAS SNPs are found, an empty list is returned.
+
+# Annotate GWAS SNPs overlapping circRNA flanking regions
+snpsGWAS <-
+    annotateSNPsGWAS(
+        targetsFTS_gr,
+        assembly = "hg19",
+        makeCurrent = TRUE
+    )
+
+# ------------------------------------------------------------
+#17: Annotate repetitive elements
+# ------------------------------------------------------------
+# The function annotateRepeats() identifies repetitive elements
+# located within the regions flanking the back-spliced junctions
+# of circRNAs.
+#
+# Repetitive elements are retrieved from the RepeatMasker database
+# via AnnotationHub.
+#
+# By setting complementary = TRUE, only circRNAs whose flanking
+# introns contain complementary repeats (same repeat family on
+# opposite strands) are reported.
+#
+# annotationHubID = "AH5122" corresponds to RepeatMasker
+# annotations for Homo sapiens (hg19).
+#
+# If no overlapping repetitive elements are found, an empty list
+# is returned.
+
+# Annotate repetitive elements in circRNA flanking regions
+repeats <-
+    annotateRepeats(
+        targetsFTS_gr,
+        annotationHubID = "AH5122",
+        complementary = TRUE
+    )
